@@ -108,6 +108,8 @@ TS14-D project / Reliable Software and Architecture - Mandatory project
          we copy it manually to the lib folder -->
     <copy file="lib-bootstrap/org.restlet.jar"
           todir="${lib.dir}"/>
+	<copy file="lib-bootstrap/docker-client-0.0.1.jar"
+		                  todir="${lib.dir}"/>
     <ivy:retrieve/>
   </target>    
   

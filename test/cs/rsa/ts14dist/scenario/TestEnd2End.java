@@ -19,6 +19,10 @@ package cs.rsa.ts14dist.scenario;
 import static org.junit.Assert.*;  
  
 import java.io.IOException; 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
  
 import org.junit.*;  
  
@@ -29,8 +33,15 @@ import cs.rsa.ts14dist.appserver.*;
 import cs.rsa.ts14dist.client.*; 
 import cs.rsa.ts14dist.common.*; 
 import cs.rsa.ts14dist.cookie.CookieService;
+import cs.rsa.ts14dist.database.MongoStorage;
 import cs.rsa.ts14dist.database.Storage; 
 import cs.rsa.ts14dist.doubles.*; 
+import com.spotify.docker.client.DefaultDockerClient;
+import com.spotify.docker.client.DockerException;
+import com.spotify.docker.client.messages.ContainerConfig;
+import com.spotify.docker.client.messages.ContainerCreation;
+import com.spotify.docker.client.messages.HostConfig;
+import com.spotify.docker.client.messages.PortBinding;
  
 /** TDD test cases for developing the distribution 
  * infrastructure for TS14D. The End2End test case 
@@ -68,14 +79,24 @@ public class TestEnd2End {
    
   private Storage storage;
   private CookieService cookieService; 
+  
+  private String mongoDBID;
+  private String rabbitMQID;
+  private DefaultDockerClient docker;
+  
    
   /** Configure the fake-objects that
    * represent the abstractions representing
    * distribution aspects.
    */
   @Before 
-  public void setup() { 
-    // Define the input lines... 
+  public void setup() throws DockerException, InterruptedException, IOException { 
+	  docker = new DefaultDockerClient("http://127.0.0.1:2375");
+	      
+	  mongoDBID = startContainer("rsagolf/mongodb", "27017");
+	  rabbitMQID = startContainer("rsagolf/rabbitmq", "5672");
+	 
+	  // Define the input lines... 
     timesagLines = new String[] { 
         "Week 2 :  5 : 0", 
         " ", 
@@ -87,7 +108,7 @@ public class TestEnd2End {
     user = "rsa"; 
      
     // Replace actual database with fake object/spy 
-    storage = new FakeObjectStorage();  
+    storage = new MongoStorage("127.0.0.1", "ts14db");  
     
     // Replace fortune cookie service with stub
     cookieService = new StubCookieService();
@@ -104,13 +125,44 @@ public class TestEnd2End {
      
     // Define a local in memory call connector to tie client 
     // side with server side 
-    connector = new InMemoryCallConnector(serverRequestHandler); 
+    connector = new RabbitMQRPCConnector("127.0.0.1");
      
     // Finally define the client side request handler, and 
     // couple it to the defined connector. 
     requestHandler = new StandardClientRequestHandler(connector); 
   } 
-   
+  
+  public String startContainer(String name, String port) throws DockerException, InterruptedException
+  {
+		// Pull image
+		docker.pull(name);
+
+		// Create container
+		 ContainerConfig config = ContainerConfig.builder()
+		    .exposedPorts(port + "/tcp")
+		    .image(name)
+		    .portSpecs(port)
+		    .build();
+		 ContainerCreation creation = docker.createContainer(config);
+		 String id = creation.id();
+
+		 //Map port from host to container
+		 List<PortBinding> list = new ArrayList<PortBinding>();
+		 list.add(PortBinding.of("", port));
+		 Map<String, List<PortBinding>> portBindings = new HashMap<String, List<PortBinding>>();
+	      portBindings.put(port + "/tcp", list); 
+	      HostConfig hostConfig = HostConfig.builder()  		
+	          .portBindings(portBindings)
+	          .networkMode("bridge")
+	          .build();
+
+		    
+		// Start container
+		docker.startContainer(id, hostConfig);
+		
+		return id;
+  }
+  
   // Use case 1: User adds a single line to his timesag file 
   // AND end-2-end testing - validate that stuff is stored in 
   // the storage tier. 
@@ -192,5 +244,12 @@ public class TestEnd2End {
     assertTrue( "Fortune cookie contents missing or wrong", 
         report.contains("Cookie no.")); 
   } 
+  
+  @After
+  public void tearDown() throws DockerException, InterruptedException
+  {
+	  docker.killContainer(mongoDBID);
+	  docker.killContainer(rabbitMQID);
+  }
  
 } 
